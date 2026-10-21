@@ -24,7 +24,7 @@ struct Command
 	int _background;
 	int _append;
 
-	void prompt(); // -> parse
+	void prompt(); // -> parse -> execute
 	void print();
 	void execute();
 	void clear();

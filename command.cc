@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -23,6 +22,53 @@ void parse(std::vector<Token> &tokens)
 {
     Command currentCommand;
     SimpleCommand *currentSimpleCommand = new SimpleCommand();
+
+    for (size_t i = 0; i < tokens.size(); i++)
+    {
+        Token token = tokens[i];
+        // since the method clear() already frees the memory of the current command, I will create new mallocs - strdup
+        switch (token.type)
+        {
+        case TOKEN_COMMAND:
+            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
+            break;
+        case TOKEN_ARGUMENT:
+            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
+            break;
+        case TOKEN_REDIRECT:
+            token = tokens[++i]; 
+            currentCommand._outFile = strdup(token.value.c_str());
+            break;
+        case TOKEN_APPEND:
+            currentCommand._append = 1;
+            token = tokens[++i];
+            currentCommand._outFile = strdup(token.value.c_str());
+            break;
+        case TOKEN_INPUT:
+            token = tokens[++i];
+            currentCommand._inputFile = strdup(token.value.c_str());
+            break;
+        case TOKEN_ERROR:
+            token = tokens[++i];
+            currentCommand._errFile = strdup(token.value.c_str());
+            break;
+        case TOKEN_PIPE:
+            currentCommand.insertSimpleCommand(currentSimpleCommand);
+            currentSimpleCommand = new SimpleCommand();
+            break;
+        case TOKEN_BACKGROUND:
+            currentCommand._background = 1;
+            break;
+        case TOKEN_REDIRECT_AND_ERROR:
+            currentCommand._out_error = 1;
+            token = tokens[++i];
+            currentCommand._outFile = strdup(token.value.c_str());
+            break;
+        default:
+            break;
+        }
+    }
+    currentCommand.insertSimpleCommand(currentSimpleCommand);
 
     currentCommand.execute();
     /*
@@ -55,7 +101,7 @@ void SimpleCommand::insertArgument(char *argument)
     _numberOfArguments++;
 }
 
-Command::Command()
+Command::Command() // constructor
 {
     _numberOfAvailableSimpleCommands = 1;
     _simpleCommands = (SimpleCommand **)
@@ -169,8 +215,11 @@ void Command::prompt()
 Command Command::_currentCommand;
 SimpleCommand *Command::_currentSimpleCommand;
 
+const int defaultin = dup(0);
+const int defaultout = dup(1);
+const int defaulterr = dup(2);
 int main()
 {
-    Command::_currentCommand.prompt();
+    Command::_currentCommand.prompt(); // prompt -> parse -> execute -> clear -> prompt ...
     return 0;
 }
