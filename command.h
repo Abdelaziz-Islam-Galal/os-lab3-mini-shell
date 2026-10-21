@@ -20,7 +20,7 @@ struct Command
 	char *_outFile;
 	char *_inputFile;
 	char *_errFile;
-	int  _out_error;
+	int _out_error;
 	int _background;
 	int _append;
 
@@ -30,6 +30,7 @@ struct Command
 	void clear();
 
 	Command();
+	~Command(); // destructor so after any return free allocations
 	void insertSimpleCommand(SimpleCommand *simpleCommand);
 
 	static Command _currentCommand;
