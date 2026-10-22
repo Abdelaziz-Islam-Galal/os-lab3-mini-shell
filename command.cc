@@ -12,19 +12,33 @@
 #include <vector>
 #include <string>
 #include <cctype>
+#include <csignal>
 #include <iostream>
 #include <sstream>
 #include "command.h"
 #include "tokenizer.h"
 
-void parse(std::vector<Token> &tokens)
+static constexpr const char *EXIT_COMMAND = "exit"; // static = scoped to this file only; constexpr = compile-time ;)
+
+static void parse(std::vector<Token> &tokens)
 {
     Command currentCommand;
     SimpleCommand *currentSimpleCommand = new SimpleCommand();
 
     if (tokens.empty() || tokens[0].type == TOKEN_EOF)
         return;
-    
+    if (tokens[0].value == EXIT_COMMAND)
+    {
+        printf("\tGood bye!!\n");
+        exit(0);
+    }
+
+    if (tokens[0].type != TOKEN_COMMAND && tokens[0].type != TOKEN_ARGUMENT)
+    {
+        printf("syntax error: invalid command\n");
+        return;
+    }
+
     int size = tokens.size();
     for (size_t i = 0; i < size; i++)
     {
@@ -100,12 +114,6 @@ void parse(std::vector<Token> &tokens)
     currentCommand.insertSimpleCommand(currentSimpleCommand);
 
     currentCommand.execute();
-    /*
-      Implement this function
-      you must parse for all possible tokens scenario
-      right now command.execute only print the format , you will inject it in your logic.
-
-    */
 }
 
 SimpleCommand::SimpleCommand()
@@ -239,7 +247,7 @@ void Command::execute()
     {
         if (_simpleCommands[i]->_numberOfArguments == 0)
         {
-            fprintf(stderr, "syntax error: there is an empty command\n");
+            fprintf(stderr, "syntax error: there is an empty command after a pipe (\"|\")\n");
             clear();
             return;
         }
@@ -266,8 +274,8 @@ void Command::execute()
 
     // setting redircetions
     // finalout is used instead of outfd because outfd is used for the pipe and will be closed in the loop; hence, finalout will be used for the last output
-    int infd = _inputFile ? open(_inputFile, O_RDONLY) : dup(defaultin);
-    int finalout = _outFile ? open(_outFile, O_WRONLY | O_CREAT | (_append ? O_APPEND : O_TRUNC), 0666) : dup(defaultout);
+    int infd = _inputFile ? creat(_inputFile, 0666) : dup(defaultin);
+    int finalout = _outFile ? creat(_outFile, 0666) : dup(defaultout);
     int errfd = defaulterr;
     if (_out_error)
     {
@@ -275,12 +283,12 @@ void Command::execute()
     }
     else if (_errFile)
     {
-        errfd = open(_errFile, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        errfd = creat(_errFile, 0666);
     }
 
     if (infd < 0 || finalout < 0 || errfd < 0)
     {
-        perror("open failed");
+        perror("Create file descriptor failed");
         if (infd >= 0)
             close(infd);
         if (finalout >= 0)
@@ -385,7 +393,7 @@ void Command::prompt()
         printf("myshell>");
         fflush(stdout);
         if (!std::getline(std::cin, input))
-            break; // Ctrl-D
+            break; // Ctrl+D (EOF) pressed and input stream is closed; getline() returns false
         if (input.empty())
             continue;
         std::vector<Token> tokens = tokenize(input);
@@ -398,6 +406,7 @@ SimpleCommand *Command::_currentSimpleCommand;
 
 int main()
 {
+    std::signal(SIGINT, SIG_IGN);      // SIG_IGN = SIGNAL_IGNORE; hence, ignore SIGINT(Ctrl+c)
     Command::_currentCommand.prompt(); // prompt -> parse -> execute -> clear -> prompt ...
 
     return 0;
