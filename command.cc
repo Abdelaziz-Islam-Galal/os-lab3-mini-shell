@@ -22,6 +22,9 @@ void parse(std::vector<Token> &tokens)
     Command currentCommand;
     SimpleCommand *currentSimpleCommand = new SimpleCommand();
 
+    if (tokens.empty() || tokens[0].type == TOKEN_EOF)
+        return;
+    
     int size = tokens.size();
     for (size_t i = 0; i < size; i++)
     {
@@ -261,12 +264,19 @@ void Command::execute()
     const int defaultout = dup(1);
     const int defaulterr = dup(2);
 
-    int flags = O_WRONLY | O_CREAT | (_append ? O_APPEND : O_TRUNC);
+    // setting redircetions
+    // finalout is used instead of outfd because outfd is used for the pipe and will be closed in the loop; hence, finalout will be used for the last output
     int infd = _inputFile ? open(_inputFile, O_RDONLY) : dup(defaultin);
-    int finalout = _outFile ? open(_outFile, flags, 0666) : dup(defaultout);
-    int errfd = _out_error ? dup(finalout) // &> shares one file description
-                : _errFile ? open(_errFile, O_WRONLY | O_CREAT | O_TRUNC, 0666)
-                           : dup(defaulterr);
+    int finalout = _outFile ? open(_outFile, O_WRONLY | O_CREAT | (_append ? O_APPEND : O_TRUNC), 0666) : dup(defaultout);
+    int errfd = defaulterr;
+    if (_out_error)
+    {
+        errfd = dup(finalout);
+    }
+    else if (_errFile)
+    {
+        errfd = open(_errFile, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    }
 
     if (infd < 0 || finalout < 0 || errfd < 0)
     {
@@ -296,12 +306,8 @@ void Command::execute()
         int outfd;
         if (i == _numberOfSimpleCommands - 1)
         {
-            outfd = _outFile ? open(_outFile, O_WRONLY | O_CREAT | (_append ? O_APPEND : O_TRUNC), 0666) : dup(defaultout);
-            if (_out_error)
-            {
-                close(errfd);
-                errfd = dup(outfd);
-            }
+            outfd = finalout;
+            finalout = -1;
         }
         else
         {
@@ -309,6 +315,11 @@ void Command::execute()
             if (pipe(fdpipe) < 0)
             {
                 perror("pipe");
+                close(infd);
+                close(finalout);
+                close(errfd);
+                // defaults are closed out of the loop
+                clear();
                 break;
             }
             outfd = fdpipe[1];
@@ -325,6 +336,10 @@ void Command::execute()
         if (pid < 0)
         {
             perror("fork");
+            close(infd);
+            close(finalout);
+            close(errfd);
+            // defaults are closed out of the loop
             break;
         }
         if (pid == 0)
@@ -333,6 +348,7 @@ void Command::execute()
             close(defaultout);
             close(defaulterr);
             close(errfd);
+            close(finalout); // stays open before the child creation
             if (i < _numberOfSimpleCommands - 1)
                 close(infd); // unused read end
             execvp(_simpleCommands[i]->_arguments[0], _simpleCommands[i]->_arguments);
