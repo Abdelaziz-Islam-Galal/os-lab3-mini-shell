@@ -1,6 +1,7 @@
 # Makefile
 *.o
 myshell
+myshell.log
 
 # Testing Purposes
 temp*

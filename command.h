@@ -2,6 +2,8 @@
 #ifndef command_h
 #define command_h
 
+#include "tokenizer.h"
+
 struct SimpleCommand
 {
 	int _numberOfAvailableArguments;
@@ -11,6 +13,8 @@ struct SimpleCommand
 	SimpleCommand();
 	void insertArgument(char *argument);
 };
+
+
 
 struct Command
 {
@@ -24,7 +28,8 @@ struct Command
 	int _background;
 	int _append;
 
-	void prompt(); // -> parse -> execute
+	void prompt();							// -> parse -> execute
+	static void parse(std::vector<Token> &tokens); // -> execute
 	void print();
 	void execute();
 	void clear();
@@ -35,6 +40,13 @@ struct Command
 
 	static Command _currentCommand;
 	static SimpleCommand *_currentSimpleCommand;
+
+	struct Logger
+	{
+		static FILE *_logFile;
+
+		static void log_execution(int signum); // signal handler for SIGCHLD
+	};
 };
 
 #endif

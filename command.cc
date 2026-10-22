@@ -15,106 +15,12 @@
 #include <csignal>
 #include <iostream>
 #include <sstream>
+#include <fstream>
 #include "command.h"
-#include "tokenizer.h"
 
 static constexpr const char *EXIT_COMMAND = "exit"; // static = scoped to this file only; constexpr = compile-time ;)
-
-static void parse(std::vector<Token> &tokens)
-{
-    Command currentCommand;
-    SimpleCommand *currentSimpleCommand = new SimpleCommand();
-
-    if (tokens.empty() || tokens[0].type == TOKEN_EOF)
-        return;
-    if (tokens[0].value == EXIT_COMMAND)
-    {
-        printf("\tGood bye!!\n");
-        exit(0);
-    }
-
-    if (tokens[0].type != TOKEN_COMMAND && tokens[0].type != TOKEN_ARGUMENT)
-    {
-        printf("syntax error: invalid command\n");
-        return;
-    }
-
-    int size = tokens.size();
-    for (size_t i = 0; i < size; i++)
-    {
-        Token token = tokens[i];
-        // since the method clear() already frees the memory of the current command, I will create new mallocs - strdup
-        switch (token.type)
-        {
-        case TOKEN_COMMAND:
-            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
-            break;
-        case TOKEN_ARGUMENT:
-            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
-            break;
-        case TOKEN_REDIRECT:
-            if (i + 1 >= size || tokens[i + 1].type != TOKEN_ARGUMENT)
-            {
-                fprintf(stderr, "Error: Missing filename for output redirection.\n");
-                return;
-            }
-            token = tokens[++i];
-            currentCommand._outFile = strdup(token.value.c_str());
-            break;
-        case TOKEN_APPEND:
-            if (i + 1 >= size || tokens[i + 1].type != TOKEN_ARGUMENT)
-            {
-                fprintf(stderr, "Error: Missing filename for output redirection (append mode).\n");
-                return;
-            }
-            currentCommand._append = 1;
-            token = tokens[++i];
-            currentCommand._outFile = strdup(token.value.c_str());
-            break;
-        case TOKEN_INPUT:
-            if (i + 1 >= size || tokens[i + 1].type != TOKEN_ARGUMENT)
-            {
-                fprintf(stderr, "Error: Missing filename for input redirection.\n");
-                return;
-            }
-            token = tokens[++i];
-            currentCommand._inputFile = strdup(token.value.c_str());
-            break;
-        case TOKEN_ERROR:
-            if (i + 1 >= size || tokens[i + 1].type != TOKEN_ARGUMENT)
-            {
-                fprintf(stderr, "Error: Missing filename for error redirection.\n");
-                return;
-            }
-            token = tokens[++i];
-            currentCommand._errFile = strdup(token.value.c_str());
-            break;
-        case TOKEN_PIPE:
-            currentCommand.insertSimpleCommand(currentSimpleCommand);
-            currentSimpleCommand = new SimpleCommand();
-            break;
-        case TOKEN_BACKGROUND:
-            currentCommand._background = 1;
-            break;
-        case TOKEN_REDIRECT_AND_ERROR:
-            if (i + 1 >= size || tokens[i + 1].type != TOKEN_ARGUMENT)
-            {
-                fprintf(stderr, "Error: Missing filename for output and error redirection.\n");
-                return;
-            }
-            currentCommand._out_error = 1;
-            token = tokens[++i];
-            currentCommand._outFile = strdup(token.value.c_str());
-            currentCommand._errFile = strdup(token.value.c_str());
-            break;
-        default:
-            break;
-        }
-    }
-    currentCommand.insertSimpleCommand(currentSimpleCommand);
-
-    currentCommand.execute();
-}
+static const char *LOG_FILE_NAME = "./myshell.log";
+FILE *Command::Logger::_logFile = nullptr;
 
 SimpleCommand::SimpleCommand()
 {
@@ -232,6 +138,102 @@ void Command::print()
     printf("  %-12s %-12s %-12s %-12s %-12s\n", _outFile ? _outFile : "default",
            _inputFile ? _inputFile : "default", _errFile ? _errFile : "default", _out_error == 1 ? _errFile : "default", _background ? "YES" : "NO");
     printf("\n\n");
+}
+
+void Command::parse(std::vector<Token> &tokens)
+{
+    Command currentCommand;
+    SimpleCommand *currentSimpleCommand = new SimpleCommand();
+
+    if (tokens.empty() || tokens[0].type == TOKEN_EOF)
+        return;
+    if (tokens[0].value == EXIT_COMMAND)
+    {
+        printf("\tGood bye!!\n");
+        exit(0);
+    }
+
+    if (tokens[0].type != TOKEN_COMMAND && tokens[0].type != TOKEN_ARGUMENT)
+    {
+        printf("syntax error: invalid command\n");
+        return;
+    }
+
+    int size = tokens.size();
+    for (size_t i = 0; i < size; i++)
+    {
+        Token token = tokens[i];
+        // since the method clear() already frees the memory of the current command, I will create new mallocs - strdup
+        switch (token.type)
+        {
+        case TOKEN_COMMAND:
+            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
+            break;
+        case TOKEN_ARGUMENT:
+            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
+            break;
+        case TOKEN_REDIRECT:
+            if (i + 1 >= size || tokens[i + 1].type != TOKEN_ARGUMENT)
+            {
+                fprintf(stderr, "Error: Missing filename for output redirection.\n");
+                return;
+            }
+            token = tokens[++i];
+            currentCommand._outFile = strdup(token.value.c_str());
+            break;
+        case TOKEN_APPEND:
+            if (i + 1 >= size || tokens[i + 1].type != TOKEN_ARGUMENT)
+            {
+                fprintf(stderr, "Error: Missing filename for output redirection (append mode).\n");
+                return;
+            }
+            currentCommand._append = 1;
+            token = tokens[++i];
+            currentCommand._outFile = strdup(token.value.c_str());
+            break;
+        case TOKEN_INPUT:
+            if (i + 1 >= size || tokens[i + 1].type != TOKEN_ARGUMENT)
+            {
+                fprintf(stderr, "Error: Missing filename for input redirection.\n");
+                return;
+            }
+            token = tokens[++i];
+            currentCommand._inputFile = strdup(token.value.c_str());
+            break;
+        case TOKEN_ERROR:
+            if (i + 1 >= size || tokens[i + 1].type != TOKEN_ARGUMENT)
+            {
+                fprintf(stderr, "Error: Missing filename for error redirection.\n");
+                return;
+            }
+            token = tokens[++i];
+            currentCommand._errFile = strdup(token.value.c_str());
+            break;
+        case TOKEN_PIPE:
+            currentCommand.insertSimpleCommand(currentSimpleCommand);
+            currentSimpleCommand = new SimpleCommand();
+            break;
+        case TOKEN_BACKGROUND:
+            currentCommand._background = 1;
+            break;
+        case TOKEN_REDIRECT_AND_ERROR:
+            if (i + 1 >= size || tokens[i + 1].type != TOKEN_ARGUMENT)
+            {
+                fprintf(stderr, "Error: Missing filename for output and error redirection.\n");
+                return;
+            }
+            currentCommand._out_error = 1;
+            token = tokens[++i];
+            currentCommand._outFile = strdup(token.value.c_str());
+            currentCommand._errFile = strdup(token.value.c_str());
+            break;
+        default:
+            break;
+        }
+    }
+    currentCommand.insertSimpleCommand(currentSimpleCommand);
+
+    currentCommand.execute();
 }
 
 void Command::execute()
@@ -401,12 +403,55 @@ void Command::prompt()
     }
 }
 
+void Command::Logger::log_execution(int sig)
+{
+    int status;
+    pid_t pid;
+
+    // Reap all terminated children without blocking
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0)
+    {
+        fprintf(_logFile, "Child PID %d terminated.\n", pid);
+        fflush(_logFile); // Force write to file immediately
+    }
+}
+
 Command Command::_currentCommand;
 SimpleCommand *Command::_currentSimpleCommand;
 
+static void closeLogger(){
+    time_t now = time(nullptr);
+    fprintf(Command::Logger::_logFile, "=========================================\n");
+    fprintf(Command::Logger::_logFile, "Shell exited at %s", ctime(&now)); // it seems ctime has newline at the end?
+    fprintf(Command::Logger::_logFile, "=========================================\n");
+
+    if (Command::Logger::_logFile)
+    {
+        fclose(Command::Logger::_logFile);
+    }
+}
+
 int main()
 {
-    std::signal(SIGINT, SIG_IGN);      // SIG_IGN = SIGNAL_IGNORE; hence, ignore SIGINT(Ctrl+c)
+    std::signal(SIGINT, SIG_IGN); // SIG_IGN = SIGNAL_IGNORE; hence, ignore SIGINT(Ctrl+c)
+    std::atexit(closeLogger); // register the closeLogger function to be called at exit
+
+    // logging
+    Command::Logger::_logFile = fopen(LOG_FILE_NAME, "w");
+    if (!Command::Logger::_logFile)
+    {
+        perror("fopen failed");
+        exit(1);
+    }
+    fflush(Command::Logger::_logFile);
+
+    time_t now = time(nullptr);
+    fprintf(Command::Logger::_logFile, "=========================================\n");
+    fprintf(Command::Logger::_logFile, "Shell started at %s", ctime(&now)); // it seems ctime has newline at the end?
+    fprintf(Command::Logger::_logFile, "=========================================\n");
+
+    signal(SIGCHLD, Command::Logger::log_execution); // every time a child process terminates, use the function log_execution
+
     Command::_currentCommand.prompt(); // prompt -> parse -> execute -> clear -> prompt ...
 
     return 0;
