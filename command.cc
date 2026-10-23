@@ -143,21 +143,17 @@ void Command::print()
 void Command::parse(std::vector<Token> &tokens)
 {
     Command currentCommand;
-    SimpleCommand *currentSimpleCommand = new SimpleCommand();
 
     if (tokens.empty() || tokens[0].type == TOKEN_EOF)
         return;
-    if (tokens[0].value == EXIT_COMMAND)
-    {
-        printf("\tGood bye!!\n");
-        exit(0);
-    }
 
     if (tokens[0].type != TOKEN_COMMAND && tokens[0].type != TOKEN_ARGUMENT)
     {
         printf("syntax error: invalid command\n");
         return;
     }
+
+    SimpleCommand *currentSimpleCommand = new SimpleCommand();
 
     int size = tokens.size();
     for (size_t i = 0; i < size; i++)
@@ -236,6 +232,15 @@ void Command::parse(std::vector<Token> &tokens)
     currentCommand.execute();
 }
 
+static void guarded_close(int &fd)
+{
+    if (fd >= 0)
+    {
+        close(fd);
+        fd = -1;
+    }
+}
+
 void Command::execute()
 {
     print();
@@ -256,28 +261,32 @@ void Command::execute()
     }
 
     char **first = _simpleCommands[0]->_arguments;
-    if (strcmp(first[0], "exit") == 0) // needs to be checked here not in a child so the exit(0) actually terminates this process not just the child
+    if (strcmp(first[0], EXIT_COMMAND) == 0)
+    { // needs to be checked here not in a child so the exit(0) actually terminates this process not just the child
+        printf("\tGood bye!!\n");
         exit(0);
-    if (strcmp(first[0], "cd") == 0 && _numberOfSimpleCommands == 1) // cd does not exist as an executable command. (And it cannot, because a process can only change the working directory of itself, not of its parent.) -> ref: https://stackoverflow.com/questions/18686114/cd-command-not-working-with-execvp
+    }
+    else if (strcmp(first[0], "cd") == 0 && _numberOfSimpleCommands == 1) // cd does not exist as an executable command. (And it cannot, because a process can only change the working directory of itself, not of its parent.) -> ref: https://stackoverflow.com/questions/18686114/cd-command-not-working-with-execvp
     {
         const char *dir = first[1] ? first[1] : getenv("HOME");
         if (!dir)
             fprintf(stderr, "cd: HOME variable is not set; hence, cd defaulting to root failed\n");
-        if (chdir(dir) < 0)
+        else if (chdir(dir) < 0)
             perror("cd");
         clear();
         return;
     }
 
     // save main descriptors
-    const int defaultin = dup(0);
-    const int defaultout = dup(1);
-    const int defaulterr = dup(2);
+    int defaultin = dup(0);
+    int defaultout = dup(1);
+    int defaulterr = dup(2);
 
     // setting redircetions
     // finalout is used instead of outfd because outfd is used for the pipe and will be closed in the loop; hence, finalout will be used for the last output
-    int infd = _inputFile ? creat(_inputFile, 0666) : dup(defaultin);
-    int finalout = _outFile ? creat(_outFile, 0666) : dup(defaultout);
+    int infd = _inputFile ? open(_inputFile, O_RDONLY) : dup(defaultin);
+    int finaloutFlags = O_WRONLY | O_CREAT | (_append ? O_APPEND : O_TRUNC);
+    int finalout = _outFile ? open(_outFile, finaloutFlags, 0666) : dup(defaultout);
     int errfd = defaulterr;
     if (_out_error)
     {
@@ -291,15 +300,12 @@ void Command::execute()
     if (infd < 0 || finalout < 0 || errfd < 0)
     {
         perror("Create file descriptor failed");
-        if (infd >= 0)
-            close(infd);
-        if (finalout >= 0)
-            close(finalout);
-        if (errfd >= 0)
-            close(errfd);
-        close(defaultin);
-        close(defaultout);
-        close(defaulterr);
+        guarded_close(infd);
+        guarded_close(finalout);
+        guarded_close(errfd);
+        guarded_close(defaultin);
+        guarded_close(defaultout);
+        guarded_close(defaulterr);
         clear();
         return;
     }
@@ -310,11 +316,23 @@ void Command::execute()
     for (int i = 0; i < _numberOfSimpleCommands; i++)
     {
         dup2(infd, 0);
-        close(infd);
+        guarded_close(infd);
 
         // set up outfd redirection for the last command or create a pipe for intermediate commands
         int outfd;
-        if (i == _numberOfSimpleCommands - 1)
+        if (strcmp(_simpleCommands[i]->_arguments[0], EXIT_COMMAND) == 0)
+        {
+            guarded_close(infd);
+            guarded_close(finalout);
+            guarded_close(errfd);
+            guarded_close(defaultin);
+            guarded_close(defaultout);
+            guarded_close(defaulterr);
+
+            printf("\tGood bye!!\n");
+            exit(0);
+        }
+        else if (i == _numberOfSimpleCommands - 1)
         {
             outfd = finalout;
             finalout = -1;
@@ -325,9 +343,9 @@ void Command::execute()
             if (pipe(fdpipe) < 0)
             {
                 perror("pipe");
-                close(infd);
-                close(finalout);
-                close(errfd);
+                guarded_close(infd);
+                guarded_close(finalout);
+                guarded_close(errfd);
                 // defaults are closed out of the loop
                 clear();
                 break;
@@ -338,7 +356,7 @@ void Command::execute()
 
         // set up redirection (using outfd and errfd)
         dup2(outfd, 1);
-        close(outfd);
+        guarded_close(outfd);
         dup2(errfd, 2); // set it for each child/command, so that if it is a file it needs setting per each
 
         // set up the child process to execute the command
@@ -346,21 +364,23 @@ void Command::execute()
         if (pid < 0)
         {
             perror("fork");
-            close(infd);
-            close(finalout);
-            close(errfd);
+            guarded_close(infd);
+            guarded_close(finalout);
+            guarded_close(errfd);
             // defaults are closed out of the loop
             break;
         }
         if (pid == 0)
         {
-            close(defaultin);
-            close(defaultout);
-            close(defaulterr);
-            close(errfd);
-            close(finalout); // stays open before the child creation
+            signal(SIGINT, SIG_DFL);  // SIG_DFL = SIGNAL_DEFAULT; hence, restore the default behavior of SIGINT(Ctrl+c) for the child process; safety procedure, I only need to cancel the signal for the shell
+            signal(SIGCHLD, SIG_DFL); // restore the default behavior of SIGCHLD for the child process;
+            guarded_close(defaultin);
+            guarded_close(defaultout);
+            guarded_close(defaulterr);
+            guarded_close(errfd);
+            guarded_close(finalout); // stays open before the child creation
             if (i < _numberOfSimpleCommands - 1)
-                close(infd); // unused read end
+                guarded_close(infd); // unused read end
             execvp(_simpleCommands[i]->_arguments[0], _simpleCommands[i]->_arguments);
             perror(_simpleCommands[i]->_arguments[0]); // mention the command name in the error message
             _exit(EXIT_FAILURE);
@@ -368,15 +388,17 @@ void Command::execute()
         pids.push_back(pid);
     }
     if (finalout >= 0)
-        close(finalout); // loop broke early due to an error
+        guarded_close(finalout); // loop broke early due to an error
+    if (errfd != defaulterr)
+        guarded_close(errfd);
 
     // restore the shell's own descriptors
     dup2(defaultin, 0);
     dup2(defaultout, 1);
     dup2(defaulterr, 2);
-    close(defaultin);
-    close(defaultout);
-    close(defaulterr);
+    guarded_close(defaultin);
+    guarded_close(defaultout);
+    guarded_close(defaulterr);
 
     if (!_background)
         for (pid_t p : pids)
@@ -419,7 +441,8 @@ void Command::Logger::log_execution(int sig)
 Command Command::_currentCommand;
 SimpleCommand *Command::_currentSimpleCommand;
 
-static void closeLogger(){
+static void closeLogger()
+{
     time_t now = time(nullptr);
     fprintf(Command::Logger::_logFile, "=========================================\n");
     fprintf(Command::Logger::_logFile, "Shell exited at %s", ctime(&now)); // it seems ctime has newline at the end?
@@ -434,7 +457,7 @@ static void closeLogger(){
 int main()
 {
     std::signal(SIGINT, SIG_IGN); // SIG_IGN = SIGNAL_IGNORE; hence, ignore SIGINT(Ctrl+c)
-    std::atexit(closeLogger); // register the closeLogger function to be called at exit
+    std::atexit(closeLogger);     // register the closeLogger function to be called at exit
 
     // logging
     Command::Logger::_logFile = fopen(LOG_FILE_NAME, "w");
