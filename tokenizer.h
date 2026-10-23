@@ -23,6 +23,7 @@ struct Token
 {
     TokenType type;
     std::string value;
+    bool quoted = false; // I added this to make sure not expand wildcards used inside of quotes
 };
 
 std::vector<Token> tokenize(const std::string &input);

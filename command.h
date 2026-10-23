@@ -2,6 +2,7 @@
 #ifndef command_h
 #define command_h
 
+#include <stdio.h> // for FILE that I added to the Logger struct
 #include "tokenizer.h"
 
 struct SimpleCommand
@@ -13,8 +14,6 @@ struct SimpleCommand
 	SimpleCommand();
 	void insertArgument(char *argument);
 };
-
-
 
 struct Command
 {
@@ -28,7 +27,7 @@ struct Command
 	int _background;
 	int _append;
 
-	void prompt();							// -> parse -> execute
+	void prompt();								   // -> parse -> execute
 	static void parse(std::vector<Token> &tokens); // -> execute
 	void print();
 	void execute();

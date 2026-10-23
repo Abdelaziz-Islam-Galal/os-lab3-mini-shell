@@ -140,6 +140,22 @@ void Command::print()
     printf("\n\n");
 }
 
+static void insertExpanded(SimpleCommand *simpleCommand, const Token &token)
+{
+    if (!token.quoted && token.value.find_first_of("*?") != std::string::npos)
+    {
+        glob_t g;
+        if (glob(token.value.c_str(), 0, NULL, &g) == 0)
+        {
+            for (size_t k = 0; k < g.gl_pathc; k++)
+                simpleCommand->insertArgument(strdup(g.gl_pathv[k]));
+            globfree(&g);
+            return;
+        }
+    }
+    simpleCommand->insertArgument(strdup(token.value.c_str()));
+}
+
 void Command::parse(std::vector<Token> &tokens)
 {
     Command currentCommand;
@@ -154,8 +170,9 @@ void Command::parse(std::vector<Token> &tokens)
     }
 
     SimpleCommand *currentSimpleCommand = new SimpleCommand();
+    currentCommand.insertSimpleCommand(currentSimpleCommand); //insert then do whatever, so I can return without worrying about freeing
 
-    int size = tokens.size();
+    size_t size = tokens.size();
     for (size_t i = 0; i < size; i++)
     {
         Token token = tokens[i];
@@ -163,10 +180,8 @@ void Command::parse(std::vector<Token> &tokens)
         switch (token.type)
         {
         case TOKEN_COMMAND:
-            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
-            break;
         case TOKEN_ARGUMENT:
-            currentSimpleCommand->insertArgument(strdup(token.value.c_str()));
+            insertExpanded(currentSimpleCommand, token);
             break;
         case TOKEN_REDIRECT:
             if (i + 1 >= size || tokens[i + 1].type != TOKEN_ARGUMENT)
@@ -206,8 +221,8 @@ void Command::parse(std::vector<Token> &tokens)
             currentCommand._errFile = strdup(token.value.c_str());
             break;
         case TOKEN_PIPE:
-            currentCommand.insertSimpleCommand(currentSimpleCommand);
             currentSimpleCommand = new SimpleCommand();
+            currentCommand.insertSimpleCommand(currentSimpleCommand);
             break;
         case TOKEN_BACKGROUND:
             currentCommand._background = 1;
@@ -219,6 +234,7 @@ void Command::parse(std::vector<Token> &tokens)
                 return;
             }
             currentCommand._out_error = 1;
+            currentCommand._append = 1;
             token = tokens[++i];
             currentCommand._outFile = strdup(token.value.c_str());
             currentCommand._errFile = strdup(token.value.c_str());
@@ -227,7 +243,6 @@ void Command::parse(std::vector<Token> &tokens)
             break;
         }
     }
-    currentCommand.insertSimpleCommand(currentSimpleCommand);
 
     currentCommand.execute();
 }
@@ -325,6 +340,10 @@ void Command::execute()
             guarded_close(infd);
             guarded_close(finalout);
             guarded_close(errfd);
+            
+            dup2(defaultin, 0);
+            dup2(defaultout, 1);
+            dup2(defaulterr, 2);
             guarded_close(defaultin);
             guarded_close(defaultout);
             guarded_close(defaulterr);
@@ -443,15 +462,16 @@ SimpleCommand *Command::_currentSimpleCommand;
 
 static void closeLogger()
 {
+    if (!Command::Logger::_logFile)
+        return;
+
     time_t now = time(nullptr);
     fprintf(Command::Logger::_logFile, "=========================================\n");
     fprintf(Command::Logger::_logFile, "Shell exited at %s", ctime(&now)); // it seems ctime has newline at the end?
     fprintf(Command::Logger::_logFile, "=========================================\n");
 
-    if (Command::Logger::_logFile)
-    {
-        fclose(Command::Logger::_logFile);
-    }
+    fclose(Command::Logger::_logFile);
+    Command::Logger::_logFile = nullptr; // so SIGCHLD handler do not write to a closed file;
 }
 
 int main()

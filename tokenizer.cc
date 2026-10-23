@@ -33,6 +33,7 @@ static void pushWord(std::vector<Token> &tokens, std::string &word, bool &inWord
         token.type = TOKEN_COMMAND;
 
     token.value = word;
+    token.quoted = quoted;
     tokens.push_back(token);
     word.clear();
     inWord = false;
